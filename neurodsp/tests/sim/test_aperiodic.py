@@ -1,10 +1,11 @@
 """Tests for neurodsp.sim.aperiodic."""
 
 import numpy as np
+from scipy.stats import skew, kurtosis
 from scipy.optimize import curve_fit
 
 from neurodsp.tests.settings import N_SECONDS, FS, EXP1, EXP2, KNEE, EPS
-from neurodsp.tests.tutils import check_sim_output
+from neurodsp.tests.tutils import check_sim_output, check_exponent
 
 from neurodsp.sim.aperiodic import *
 from neurodsp.sim.aperiodic import _create_powerlaw
@@ -69,6 +70,48 @@ def test_sim_powerlaw():
     # Test with a filter applied
     sig = sim_powerlaw(N_SECONDS, FS, f_range=(2, None))
     check_sim_output(sig)
+
+def test_sim_frac_gaussian_noise():
+
+    chis = np.array([-.5, 0, .5])
+    freqs = np.linspace(1, FS//2, num=FS//2)
+    error = np.zeros_like(chis)
+
+    for idx, chi in enumerate(chis):
+
+        # Simulate
+        sig = sim_frac_gaussian_noise(N_SECONDS, FS, chi=chi)
+        powers = np.abs(np.fft.fft(sig)[1:FS//2+1])**2
+
+        # Linear fit in log-log
+        [_, chi_hat], _ = curve_fit(check_exponent, np.log10(freqs), np.log10(powers))
+
+        # Compute error
+        error[idx] = abs(chi_hat - chi)
+
+    # Ensure mean error is less than 0.2 exponent
+    assert np.mean(error) < 0.2
+
+def test_sim_frac_brownian_motion():
+
+    chis = np.array([-1.5, -2, -2.5])
+    freqs = np.linspace(1, FS//2, num=FS//2)
+    error = np.zeros_like(chis)
+
+    for idx, chi in enumerate(chis):
+
+        # Simulate
+        sig = sim_frac_brownian_motion(N_SECONDS, FS, chi=chi)
+        powers = np.abs(np.fft.fft(sig)[1:FS//2+1])**2
+
+        # Linear fit in log-log
+        [_, chi_hat], _ = curve_fit(check_exponent, np.log10(freqs), np.log10(powers))
+
+        # Compute error
+        error[idx] = abs(chi_hat - chi)
+
+    # Ensure mean error less than 0.4 exponent
+    assert np.mean(error) < 0.4
 
 def test_create_powerlaw():
 

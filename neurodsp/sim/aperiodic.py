@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.stats import zscore
+from scipy.linalg import toeplitz, cholesky
 
 from neurodsp.filt import filter_signal, infer_passtype
 from neurodsp.filt.fir import compute_filter_length
@@ -303,6 +304,136 @@ def sim_powerlaw(n_seconds, fs, exponent=-2.0, f_range=None, **filter_kwargs):
 
     return sig
 
+@normalize
+def sim_frac_gaussian_noise(n_seconds, fs, chi=0, hurst=None):
+    """Simulate a fractional gaussian noise time series with a specified
+    power law exponent, or alternatively with a specified Hurst parameter.
+
+    Parameters
+    ----------
+    n_seconds : float
+        Simulation time, in seconds.
+    fs : float
+        Sampling rate of simulated signal, in Hz.
+    chi: float, optional, default: 0
+        Desired power law exponent for the spectrogram. Must be in the range (-1, 1).
+    hurst : float, optional, default: None
+        Desired Hurst parameter. Overwrites chi if defined. Must be in the range (0, 1).
+
+    Returns
+    -------
+    sig: 1d array
+        Fractional gaussian noise time series with  the desired power law decay in
+        the spectrogram, or the desired Hurst parameter.
+
+    Notes
+    -----
+    The Hurst parameter is not the Hurst exponent as defined in rescaled range analysis.
+    The Hurst parameter is defined for self-similar processes such that Y(at) = a^H Y(t)
+    for all a > 0, where this equality holds in distribution.
+
+    The relationship between the power law exponent chi and the Hurst parameter
+    for fractional gaussian noise is chi = 2 * hurst - 1.
+
+    References
+    ----------
+    For more information, consult Eke, A., et al. "Fractal characterization of
+    complexity in temporal physiological signals." Physiological measurement 23.1 (2002): R1.
+
+    Examples
+    --------
+    Simulate fractional gaussian noise with a power law decay of 0, or
+    equivalently with a Hurst parameter of 0.5 (white noise):
+
+    >>> sig = sim_fgn(n_seconds=1, fs=500)
+    """
+
+    if hurst is not None:
+        # Check that hurst is defined in the range (0, 1)
+        if (hurst <= 0 or hurst >= 1):
+            raise ValueError("Hurst parameter must be chosen from the open interval (0,1).")
+    else:
+        # Check that chi is defined in the range (-1, 1)
+        if chi <= -1 or chi >= 1:
+            raise ValueError("Chi must be chosen from the open interval (-1, 1).")
+
+        # Infer the hurst parameter from chi
+        hurst = (-chi + 1.)/2
+
+    # Construct the autocovariance function
+    n_samples = int(n_seconds * fs)
+    gamma = np.arange(0, n_samples)
+    def autocov(hurst):
+        return lambda k : 0.5*(np.abs(k-1)**(2 * hurst) - 2*k**(2*hurst) + (k+1)**(2*hurst))
+    gamma = np.apply_along_axis(autocov(hurst), 0, gamma)
+
+    # Build the autocovariance matrix
+    #   Use the Cholesky factor to transform white noise to get the desired time series
+    autocov_matrix = toeplitz(gamma)
+    cholesky_factor = cholesky(autocov_matrix, lower=True)
+
+    white_noise = np.random.randn(n_samples)
+    return cholesky_factor @ white_noise
+
+@normalize
+def sim_frac_brownian_motion(n_seconds, fs, chi=-2, hurst=None):
+    """Simulate a fractional brownian motion with a specified power law exponent,
+    or alternatively with a specified Hurst parameter.
+
+    Parameters
+    ----------
+    n_seconds : float
+        Simulation time, in seconds.
+    fs : float
+        Sampling rate of simulated signal, in Hz.
+    chi: float, optional, default: -2
+        Desired power law exponent for the spectrogram. Must be in the range (-3, -1).
+    hurst : float, optional, default: None
+        Desired Hurst parameter. Overwrites chi if defined. Must be in the range (0, 1).
+
+    Returns
+    -------
+    sig: 1d array
+        Fractional brownian motion with the desired the desired power law decay
+         in the spectrogram, or alternatively with the specified Hurst parameter.
+
+    Notes
+    -----
+    The Hurst parameter is not the Hurst exponent in general. The Hurst parameter
+    is defined for self-similar processes such that Y(at) = a^H Y(t) for all a > 0,
+    where this equality holds in distribution.
+
+    The relationship between the power law exponent chi and the Hurst parameter
+    for fractional brownian motion is chi = 2 * hurst + 1
+
+    References
+    ----------
+    For more information, consult Eke, A., et al. "Fractal characterization of
+    complexity in temporal physiological signals." Physiological measurement 23.1 (2002): R1.
+
+    Examples
+    --------
+    Simulate fractional brownian motion with a power law exponent of -2, or
+    equivalently with a Hurst parameter of 0.5 (brown noise):
+
+    >>> sig = sim_fbm(n_seconds=1, fs=500)
+    """
+
+    if hurst is not None:
+        # Check that hurst is defined in (0, 1)
+        if hurst <= 0 or hurst >= 1:
+            raise ValueError("Hurst parameter must be chosen from the open interval (0,1).")
+    else:
+        # Check that chi is defined in (1, 3)
+        if chi <= -3 or chi >= -1:
+            raise ValueError("Chi must be chosen from the open interval (-3, -1).")
+
+        # Infer the hurst parameter from chi
+        hurst = (-chi - 1.)/2
+
+    # Fractional brownian motion is the cumulative sum of fractional gaussian noise
+    fgn = sim_frac_gaussian_noise(n_seconds, fs, hurst=hurst)
+    return np.cumsum(fgn)
 
 def _create_powerlaw(n_samples, fs, exponent):
     """Create a power law time series.
